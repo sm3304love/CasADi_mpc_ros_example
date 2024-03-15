@@ -13,9 +13,9 @@ class CartpoleProb : public casadi_mpc_template::Problem
     {
         using namespace casadi;
         x_ref = {0, M_PI, 0, 0};
-        Q = DM::diag({1.0, 100.0, 0.01, 0.01});
-        R = DM::diag({0.01});
-        Qf = DM::diag({1.0, 100.0, 0.1, 0.1});
+        Q = DM::diag({5.0, 30.0, 0.01, 0.01});
+        R = DM::diag({0.1});
+        Qf = DM::diag({100.0, 100.0, 0.01, 0.01});
 
         // ub is problem
         Eigen::VectorXd u_lb = (Eigen::VectorXd(1) << -2.0).finished();
@@ -89,34 +89,45 @@ class CartpoleProb : public casadi_mpc_template::Problem
     casadi::DM Q, R, Qf;
 };
 
-void animate(const std::vector<double> &angle, const std::vector<double> &u)
+void animate(const std::vector<double> &x, const std::vector<double> &angle, const std::vector<double> &u,
+             size_t skip = 4)
 {
     namespace plt = matplotlibcpp;
     size_t cnt = 1;
-    for (size_t i = 0; i < angle.size(); i += 3)
+    for (size_t i = 0; i < x.size(); i += skip)
     {
         plt::clf();
 
+        double cart_width = 0.5;
+        double cart_height = 0.2;
         double pole_length = 0.5;
         double pole_width = 0.05;
 
-        const double pole_start_x = 0.0;
-        const double pole_start_y = 0.0;
-        const double pole_end_x = pole_start_x + pole_length * sin(angle[i]);
-        const double pole_end_y = pole_start_y - pole_length * cos(angle[i]);
+        double cart_x = x[i];
+        double cart_y = 0.0;
+        double pole_x = cart_x + pole_length * sin(angle[i]);
+        double pole_y = cart_y - pole_length * cos(angle[i]);
 
-        std::vector<double> pole_x_data = {pole_start_x, pole_end_x};
-        std::vector<double> pole_y_data = {pole_start_y, pole_end_y};
+        std::vector<double> cart_x_data = {cart_x - cart_width / 2, cart_x + cart_width / 2, cart_x + cart_width / 2,
+                                           cart_x - cart_width / 2, cart_x - cart_width / 2};
+        std::vector<double> cart_y_data = {cart_y - cart_height / 2, cart_y - cart_height / 2, cart_y + cart_height / 2,
+                                           cart_y + cart_height / 2, cart_y - cart_height / 2};
+        std::vector<double> pole_x_data = {cart_x, pole_x};
+        std::vector<double> pole_y_data = {cart_y, pole_y};
 
         plt::set_aspect(1.0);
+        plt::plot(cart_x_data, cart_y_data, "b-");
         plt::plot(pole_x_data, pole_y_data, "r-");
-        const double range_max = pole_length + 0.5;
+        double x_max = *std::max_element(x.begin(), x.end());
+        double x_min = *std::min_element(x.begin(), x.end());
+        double range_max = std::max(std::abs(x_max), std::abs(x_min)) + cart_width;
         plt::xlim(-range_max, range_max);
         plt::ylim(-range_max, range_max);
-        plt::pause(0.01);
+        // plt::save("./movie/sample" + std::to_string(cnt++) + ".png");
+        plt::pause(0.001);
+        // std::cout << i+1 << "/" << x.size() << std::endl;
     }
 }
-
 int main(int argc, char **argv)
 {
     // Initialize ROS node
@@ -130,11 +141,12 @@ int main(int argc, char **argv)
 
     Eigen::VectorXd x = Eigen::VectorXd::Zero(prob->nx());
 
-    x << 0.5, M_PI, 0, 0; // initial state
+    x << 0.3, M_PI, 0, 0; // initial state
 
-    const double dt = 0.01;
-    const size_t sim_len = 1000;
-    std::vector<double> i_log(sim_len), t_log(sim_len), angle_log(sim_len), u_log(sim_len), dt_log(sim_len);
+    const double dt = 0.001;
+    const size_t sim_len = 4000;
+    std::vector<double> i_log(sim_len), t_log(sim_len), x_log(sim_len), angle_log(sim_len), u_log(sim_len),
+        dt_log(sim_len);
 
     auto t_all_start = std::chrono::system_clock::now();
     for (size_t i = 0; i < sim_len; i++)
@@ -150,8 +162,9 @@ int main(int argc, char **argv)
 
         double solve_time = std::chrono::duration_cast<std::chrono::microseconds>(t_end - t_start).count() * 1e-6;
         std::cout << "Solve time: " << solve_time << std::endl;
-        i_log[i] = i;
         t_log[i] = i * dt;
+        i_log[i] = i;
+        x_log[i] = x[0];
         angle_log[i] = x[1];
         u_log[i] = u[0];
         dt_log[i] = solve_time * 1e3;
@@ -165,17 +178,17 @@ int main(int argc, char **argv)
     namespace plt = matplotlibcpp;
     plt::figure();
     plt::named_plot("u", t_log, u_log);
+    plt::named_plot("x", t_log, x_log);
     plt::named_plot("angle", t_log, angle_log);
-    plt::legend();
     plt::show();
 
     plt::figure();
     plt::plot(i_log, dt_log);
-    plt::xlabel("Iteration");
+    plt::xlabel("iteration");
     plt::ylabel("MPC solve time [ms]");
     plt::show();
 
-    animate(angle_log, u_log);
+    animate(x_log, angle_log, u_log);
 
     ros::shutdown();
 
